@@ -1,6 +1,6 @@
-# GitHub Actions workflow for the E2E Test Suite
+# GitHub Actions workflow for the Auto Test Suite
 
-name: Run E2E Tests
+name: Run Auto Tests
 
 # This workflow is triggered by a repository_dispatch event.
 # It's designed to be triggered by the taskmanager-app workflow after a new image is built.
@@ -21,6 +21,13 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The default ubuntu-latest runner does not have docker-compose.
+      # This step downloads and installs a specific version of docker-compose.
+      - name: Install Docker Compose
+        run: |
+          sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
 
       - name: Run tests
         # The APP_IMAGE_TAG is passed from the dispatch event payload.
