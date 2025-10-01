@@ -1,0 +1,119 @@
+# Docker Compose file for the Task Manager application and its End-to-End tests.
+# This file orchestrates all necessary services: database, application, Selenoid (for UI tests), and the test runner.
+
+# Define networks for inter-service communication.
+networks:
+  test-network:
+    driver: bridge # Use a bridge network for services to communicate.
+
+# Define all services required for the application and tests.
+services:
+  # PostgreSQL database service.
+  db:
+    image: postgres:15-alpine # Use Alpine-based PostgreSQL image for smaller size.
+    container_name: taskmanager-db # Explicit container name for easy identification.
+    environment:
+      POSTGRES_DB: taskmanager
+      POSTGRES_USER: taskuser
+      POSTGRES_PASSWORD: taskpass
+      POSTGRES_ENCODING: UTF8
+      POSTGRES_LC_COLLATE: en_US.utf8
+      POSTGRES_LC_CTYPE: en_US.utf8
+    ports:
+      - "5432:5432" # Expose database port to the host.
+    volumes:
+      - pgdata:/var/lib/postgresql/data # Persist database data using a named volume.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskuser -d taskmanager"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - test-network # Connect to the shared test network.
+
+  # Task Manager application service.
+  app:
+    build:
+      context: ../taskmanager-app # Build context is the parent directory where the application's Dockerfile.app resides.
+      dockerfile: Dockerfile.app # Specify the Dockerfile for the application.
+    container_name: taskmanager-app # Explicit container name.
+    depends_on:
+      db:
+        condition: service_healthy # Ensure database is healthy before starting the application.
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker # Activate Spring 'docker' profile.
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=validate # Validate JPA schema.
+      - SPRING_FLYWAY_ENABLED=true # Enable Flyway for database migrations.
+    ports:
+      - "8080:8080" # Expose application port to the host.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"] # Check application health endpoint.
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s # Give the application time to start up.
+    networks:
+      - test-network # Connect to the shared test network.
+
+  # The Selenoid service for running browsers in Docker containers.
+  selenoid:
+    # Builds the Selenoid image from a custom Dockerfile to include configuration.
+    build:
+      context: .
+      dockerfile: Dockerfile.selenoid
+    container_name: taskmanager-selenoid # Explicit container name.
+    ports:
+      - "4444:4444" # Expose Selenoid's WebDriver port.
+    volumes:
+      # Mounts the host's Docker socket to allow Selenoid to start browser containers.
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:4444/status || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # This command tells Selenoid to connect browser containers back to the Docker network
+    # created by this compose file, allowing browsers to access the 'app' service.
+    command: [ "-limit", "4", "-container-network", "${COMPOSE_PROJECT_NAME}_test-network"]
+    networks:
+        - test-network # Connect to the shared test network.
+
+  # Test runner service for executing tests.
+  # This service first pulls required browser images and then executes the Gradle tests.
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.tests
+    container_name: taskmanager-tests # Explicit container name.
+    volumes:
+      # Mount Docker socket to allow pulling browser images.
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      # Mount the Selenoid config to read browsers.json.
+      - "./selenoid/config:/config:ro"
+      # Mount build directory to access test reports and other build artifacts.
+      - "./build:/app/build"
+    depends_on:
+      app:
+        condition: service_healthy
+      selenoid:
+        condition: service_healthy
+    environment:
+      # Sets the Gradle user home directory inside the container.
+      - GRADLE_USER_HOME=/app/.gradle
+    networks:
+      - test-network # Connect to the shared test network.
+    command: >
+      bash -c "
+        echo 'Pulling required browser images...';
+        jq -r '.. | .image? | select(.)' /config/browsers.json | uniq | while read -r IMAGE; do
+          echo \"Pulling image: $${IMAGE}\";
+          docker pull \"$${IMAGE}\" || exit 1;
+        done;
+        echo 'Browser images are up to date. Running tests...';
+        ./gradlew tests --no-daemon --rerun-tasks -Dapi.base.uri=http://app:8080 -Dselenide.base.url=http://app:8080 -Dselenide.remote=http://selenoid:4444/wd/hub > /dev/null 2>&1 && allure generate build/allure-results --clean -o build/allure-report
+      "
+
+# Define named volumes for data persistence.
+volumes:
+  pgdata:

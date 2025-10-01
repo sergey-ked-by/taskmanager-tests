@@ -1,0 +1,31 @@
+# GitHub Actions workflow for the E2E Test Suite
+
+name: Run E2E Tests
+
+# This workflow is triggered by a repository_dispatch event.
+# It's designed to be triggered by the taskmanager-app workflow after a new image is built.
+on:
+  repository_dispatch:
+    types: [app-updated]
+
+jobs:
+  run-e2e-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout test repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run tests
+        # The APP_IMAGE_TAG is passed from the dispatch event payload.
+        # This ensures we test against the exact image that was just built.
+        env:
+          APP_IMAGE_TAG: ${{ github.event.client_payload.sha }}
+        run: |
+          docker-compose -f docker-compose.ci.yml up --build --exit-code-from tests

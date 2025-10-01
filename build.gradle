@@ -1,0 +1,93 @@
+plugins {
+    id 'java'
+    id 'org.gradle.test-retry' version '1.5.6'
+}
+
+group = 'com.example'
+version = '1.0.0'
+java.sourceCompatibility = JavaVersion.VERSION_17
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // --- Test Frameworks and Libraries ---
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.1'
+    testImplementation 'org.assertj:assertj-core:3.24.2'
+    testImplementation 'io.rest-assured:rest-assured:5.3.2'
+    testImplementation 'com.codeborne:selenide:7.0.4'
+
+    // --- Allure Reporting ---
+    testImplementation 'io.qameta.allure:allure-junit5:2.24.0'
+    testImplementation 'io.qameta.allure:allure-rest-assured:2.24.0'
+    testImplementation 'io.qameta.allure:allure-selenide:2.24.0'
+
+    // --- JWT (JSON Web Token) Libraries ---
+    // Needed if tests generate tokens for authentication
+    testImplementation 'io.jsonwebtoken:jjwt-api:0.12.3'
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.3'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.3'
+
+    // --- Utility Libraries ---
+    testImplementation 'com.fasterxml.jackson.core:jackson-annotations:2.15.2'
+    compileOnly 'org.projectlombok:lombok:1.18.30'
+    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+    testCompileOnly 'org.projectlombok:lombok:1.18.30'
+    testAnnotationProcessor 'org.projectlombok:lombok:1.18.30'
+}
+
+configurations.all {
+    resolutionStrategy {
+        force 'org.apache.commons:commons-lang3:3.14.0'
+    }
+}
+
+test {
+    useJUnitPlatform()
+    systemProperty 'selenide.headless', 'true'
+}
+
+jar {
+    enabled = false
+}
+
+tasks.register('unitTest', Test) {
+    group = 'verification'
+    description = 'Runs all unit tests defined in the project.'
+    useJUnitPlatform {
+        includeTags 'Unit'
+    }
+}
+
+tasks.register('tests', Test) {
+    group = 'verification'
+    description = 'Runs all End-to-End tests (API and UI) against the running application.'
+
+    // Define a project property for the base URL with a default value
+    def baseUrl = project.findProperty('baseUrl') ?: 'http://localhost:8080'
+    systemProperty 'taskmanager.baseUrl', baseUrl
+
+    useJUnitPlatform {
+        includeTags 'Api', 'UI'
+    }
+
+    retry {
+        maxRetries = 2
+        maxFailures = 10
+    }
+
+    // Ensure all system properties passed to Gradle are also passed to the test JVM.
+    systemProperties(System.getProperties())
+
+    // Configure the directory where Allure test results will be stored.
+    systemProperty "allure.results.directory", "${buildDir}/allure-results"
+}
+
+tasks.named('test') {
+    enabled = false
+}
+
+tasks.named('check') {
+    dependsOn(tasks.named('unitTest'))
+}

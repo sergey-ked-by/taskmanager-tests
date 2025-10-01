@@ -1,0 +1,51 @@
+# syntax=docker/dockerfile:1
+# Specifies the Dockerfile syntax version to use, enabling new features and improved parsing.
+# Dockerfile for the e2e test runner container.
+# This image is specifically designed to execute end-to-end tests against the running application.
+# Use a Gradle image with JDK 17 as the base image.
+# This base image provides Java and Gradle, which are essential for building and running the tests.
+FROM gradle:8.5-jdk17
+
+# Define Allure version and download URL
+ENV ALLURE_VERSION 2.24.0
+ENV ALLURE_DOWNLOAD_URL https://github.com/allure-framework/allure2/releases/download/${ALLURE_VERSION}/allure-${ALLURE_VERSION}.zip
+
+# Update the package list and install necessary packages.
+# - ca-certificates: Ensures secure connections for downloading resources.
+# - curl: A command-line tool for transferring data with URLs, useful for health checks or downloading.
+# - docker-ce-cli: The Docker CLI client, which is crucial for interacting with the Docker daemon.
+#   This allows Selenoid (running in a separate container) to launch browser containers on the same Docker host.
+# - unzip, wget: Required for installing Allure Commandline directly from a ZIP archive.
+# - jq: A command-line JSON processor, used to parse browsers.json.
+# Download, extract, and configure Allure Commandline
+RUN apt-get update && \
+    apt-get install -y ca-certificates curl unzip wget jq && \
+    install -m 0755 -d /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc && \
+    chmod a+r /etc/apt/keyrings/docker.asc && \
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+      $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+      tee /etc/apt/sources.list.d/docker.list > /dev/null && \
+    apt-get update && \
+    apt-get install -y docker-ce-cli && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir /opt/allure && \
+    wget -qO /tmp/allure.zip ${ALLURE_DOWNLOAD_URL} && \
+    unzip /tmp/allure.zip -d /opt/allure && \
+    rm /tmp/allure.zip && \
+    ln -s /opt/allure/allure-${ALLURE_VERSION}/bin/allure /usr/bin/allure
+
+# Set the working directory inside the container to /app.
+WORKDIR /app
+
+# Copy essential Gradle build files to leverage Docker's layer caching.
+# Changes to these files (build.gradle, settings.gradle, gradlew) invalidate this layer and subsequent ones.
+COPY build.gradle settings.gradle gradlew gradle ./
+
+# Make the Gradle wrapper script executable.
+RUN chmod +x ./gradlew
+
+# Copy the entire project context into the container.
+# This includes all source code, build scripts, and configuration files required for test execution.
+COPY . .

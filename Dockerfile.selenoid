@@ -1,0 +1,9 @@
+# Use the official Selenoid image as the base.
+FROM aerokube/selenoid:latest-release
+
+# Copy the browsers.json configuration file into the container at the location Selenoid expects.
+# This makes the image self-contained and removes the need for volume mounts in the CI environment.
+COPY selenoid/config/browsers.json /etc/selenoid/browsers.json
+
+# Expose the port Selenoid listens on.
+EXPOSE 4444

@@ -1,0 +1,107 @@
+# Docker Compose file for running tests in a CI/CD environment (GitHub Actions).
+#
+# This file is a variation of the main docker-compose.yml.
+# The key difference is that the 'app' service does not build from source.
+# Instead, it pulls a specific Docker image version from the GitHub Container Registry (ghcr.io).
+# The image tag is dynamically passed from the triggering workflow.
+
+services:
+  # PostgreSQL database service.
+  db:
+    image: postgres:15-alpine
+    container_name: taskmanager-db
+    environment:
+      POSTGRES_DB: taskmanager
+      POSTGRES_USER: taskuser
+      POSTGRES_PASSWORD: taskpass
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskuser -d taskmanager"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - test-network
+
+  # Task Manager application service.
+  # In CI, this service uses a pre-built Docker image from the GitHub Container Registry.
+  app:
+    # The image path is for the app repository.
+    # The tag is dynamically set by the workflow using an environment variable.
+    image: ghcr.io/sergey-ked-by/taskmanager-app:${APP_IMAGE_TAG:-latest}
+    container_name: taskmanager-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=validate
+      - SPRING_FLYWAY_ENABLED=true
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - test-network
+
+  # The Selenoid service for running browsers in Docker containers.
+  selenoid:
+    build:
+      context: .
+      dockerfile: Dockerfile.selenoid
+    container_name: taskmanager-selenoid
+    ports:
+      - "4444:4444"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:4444/status || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    command: [ "-limit", "4", "-container-network", "${COMPOSE_PROJECT_NAME}_test-network"]
+    networks:
+        - test-network
+
+  # Test runner service for executing tests.
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.tests
+    container_name: taskmanager-tests
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./selenoid/config:/config:ro"
+      - "./build:/app/build"
+    depends_on:
+      app:
+        condition: service_healthy
+      selenoid:
+        condition: service_healthy
+    environment:
+      - GRADLE_USER_HOME=/app/.gradle
+    networks:
+      - test-network
+    command: >
+      bash -c "
+        echo 'Pulling required browser images...';
+        jq -r '.. | .image? | select(.)' /config/browsers.json | uniq | while read -r IMAGE; do
+          echo \"Pulling image: $${IMAGE}\";
+          docker pull \"$${IMAGE}\" || exit 1;
+        done;
+        echo 'Browser images are up to date. Running tests...';
+        ./gradlew tests --no-daemon --rerun-tasks -Dapi.base.uri=http://app:8080 -Dselenide.base.url=http://app:8080 -Dselenide.remote=http://selenoid:4444/wd/hub > /dev/null 2>&1 && allure generate build/allure-results --clean -o build/allure-report
+      "
+
+networks:
+  test-network:
+    driver: bridge
+
+volumes:
+  pgdata:
