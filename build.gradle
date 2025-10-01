@@ -80,11 +80,12 @@ tasks.register('tests', Test) {
         maxFailures = 10
     }
 
-    // Temporarily disabling this to debug CI environment differences.
-    // systemProperties(System.getProperties())
+    // Pass all system properties from the Gradle daemon to the test JVM.
+    // This is required for local environment compatibility.
+    systemProperties(System.getProperties())
 
     // Configure the directory where Allure test results will be stored.
-    systemProperty "allure.results.directory", "${buildDir}/allure-results"
+    systemProperty "allure.results.directory", layout.buildDirectory.dir("allure-results").get().asFile.path
 }
 
 tasks.named('test') {
@@ -96,4 +97,12 @@ tasks.named('test') {
 
 tasks.named('check') {
     dependsOn(tasks.named('unitTest'))
+}
+
+tasks.register('printProps') {
+    doLast {
+        println "--- System Properties ---"
+        System.getProperties().each { k, v -> println "$k=$v" }
+        println "-----------------------"
+    }
 }
