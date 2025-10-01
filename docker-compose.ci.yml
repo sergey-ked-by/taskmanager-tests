@@ -65,7 +65,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    command: [ "-limit", "4", "-container-network", "${COMPOSE_PROJECT_NAME}_test-network"]
+    command: [ "-limit", "4", "-container-network", "taskmanager-tests_test-network"]
     networks:
         - test-network
 
@@ -96,7 +96,7 @@ services:
           docker pull \"$${IMAGE}\" || exit 1;
         done;
         echo 'Browser images are up to date. Running tests...';
-        ./gradlew tests --no-daemon --rerun-tasks -Dapi.base.uri=http://app:8080 -Dselenide.base.url=http://app:8080 -Dselenide.remote=http://selenoid:4444/wd/hub > /dev/null 2>&1 && allure generate build/allure-results --clean -o build/allure-report
+        ./gradlew tests --no-daemon --rerun-tasks -Dapi.base.uri=http://app:8080 -Dselenide.base.url=http://app:8080 -Dselenide.remote=http://selenoid:4444/wd/hub && allure generate build/allure-results --clean -o build/allure-report
       "
 
 networks:

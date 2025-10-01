@@ -7,6 +7,8 @@ name: Run Auto Tests
 on:
   repository_dispatch:
     types: [app-updated]
+  push:
+    branches: [main]
 
 jobs:
   run-e2e-tests:
@@ -30,9 +32,21 @@ jobs:
           sudo chmod +x /usr/local/bin/docker-compose
 
       - name: Run tests
-        # The APP_IMAGE_TAG is passed from the dispatch event payload.
-        # This ensures we test against the exact image that was just built.
+        # If triggered by dispatch, use the SHA from the payload.
+        # Otherwise (if triggered by push), default to 'latest'.
         env:
-          APP_IMAGE_TAG: ${{ github.event.client_payload.sha }}
+          APP_IMAGE_TAG: ${{ github.event.client_payload.sha || 'latest' }}
         run: |
           docker-compose -f docker-compose.ci.yml up --build --exit-code-from tests
+          
+      - name: Upload Allure Report
+        # This action is always run, even if the previous step (tests) fails,
+        # so you can see the report for failed tests.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # The name of the artifact to be uploaded.
+          name: allure-report
+          # The path to the directory to upload.
+          # This path is on the GitHub runner's filesystem.
+          path: build/allure-report

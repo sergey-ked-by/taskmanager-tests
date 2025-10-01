@@ -1,5 +1,7 @@
+//file:noinspection GrDeprecatedAPIUsage
 plugins {
     id 'java'
+    id 'io.qameta.allure' version '2.11.2' // Allure Gradle Plugin
     id 'org.gradle.test-retry' version '1.5.6'
 }
 
@@ -30,6 +32,9 @@ dependencies {
     runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.3'
 
     // --- Utility Libraries ---
+    // Overriding transitive dependencies to non-vulnerable versions
+    testImplementation 'commons-codec:commons-codec:1.17.0'
+    testImplementation 'org.apache.commons:commons-lang3:3.18.0'
     testImplementation 'com.fasterxml.jackson.core:jackson-annotations:2.15.2'
     compileOnly 'org.projectlombok:lombok:1.18.30'
     annotationProcessor 'org.projectlombok:lombok:1.18.30'
@@ -37,11 +42,9 @@ dependencies {
     testAnnotationProcessor 'org.projectlombok:lombok:1.18.30'
 }
 
-configurations.all {
-    resolutionStrategy {
-        force 'org.apache.commons:commons-lang3:3.14.0'
-    }
-}
+// Allure configuration block has been temporarily removed to restore a stable build.
+
+// Removed configurations.all block that was forcing a vulnerable transitive dependency.
 
 test {
     useJUnitPlatform()
@@ -77,8 +80,8 @@ tasks.register('tests', Test) {
         maxFailures = 10
     }
 
-    // Ensure all system properties passed to Gradle are also passed to the test JVM.
-    systemProperties(System.getProperties())
+    // Temporarily disabling this to debug CI environment differences.
+    // systemProperties(System.getProperties())
 
     // Configure the directory where Allure test results will be stored.
     systemProperty "allure.results.directory", "${buildDir}/allure-results"
@@ -87,6 +90,9 @@ tasks.register('tests', Test) {
 tasks.named('test') {
     enabled = false
 }
+
+// The 'check' task will now only run unit tests.
+
 
 tasks.named('check') {
     dependsOn(tasks.named('unitTest'))
