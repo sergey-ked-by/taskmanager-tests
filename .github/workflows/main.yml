@@ -8,7 +8,7 @@ on:
   repository_dispatch:
     types: [app-updated]
   push:
-    branches: [main]
+    branches: [main, feature/efk-integration]
 
 jobs:
   run-e2e-tests:

@@ -1,9 +1,5 @@
 # Docker Compose file for running tests in a CI/CD environment (GitHub Actions).
-#
-# This file is a variation of the main docker-compose.yml.
-# The key difference is that the 'app' service does not build from source.
-# Instead, it pulls a specific Docker image version from the GitHub Container Registry (ghcr.io).
-# The image tag is dynamically passed from the triggering workflow.
+# This file orchestrates the test environment and the ELK stack for log collection.
 
 services:
   # PostgreSQL database service.
@@ -23,12 +19,13 @@ services:
       retries: 5
     networks:
       - test-network
+    logging: &gelf-logging # Define a logging anchor for the GELF driver.
+      driver: gelf
+      options:
+        gelf-address: "udp://127.0.0.1:12201"
 
   # Task Manager application service.
-  # In CI, this service uses a pre-built Docker image from the GitHub Container Registry.
   app:
-    # The image path is for the app repository.
-    # The tag is dynamically set by the workflow using an environment variable.
     image: ghcr.io/sergey-ked-by/taskmanager-app:${APP_IMAGE_TAG:-latest}
     container_name: taskmanager-app
     depends_on:
@@ -48,6 +45,8 @@ services:
       start_period: 30s
     networks:
       - test-network
+    logging:
+      <<: *gelf-logging
 
   # The Selenoid service for running browsers in Docker containers.
   selenoid:
@@ -68,6 +67,8 @@ services:
     command: [ "-limit", "4", "-container-network", "taskmanager-tests_test-network"]
     networks:
         - test-network
+    logging:
+      <<: *gelf-logging
 
   # Test runner service for executing tests.
   tests:
@@ -84,20 +85,57 @@ services:
         condition: service_healthy
       selenoid:
         condition: service_healthy
+      logstash:
+        condition: service_started # Wait for logstash to be ready
     environment:
       - GRADLE_USER_HOME=/app/.gradle
     networks:
       - test-network
-    command: >
-      bash -c "
-        echo 'Pulling required browser images...';
-        jq -r '.. | .image? | select(.)' /config/browsers.json | uniq | while read -r IMAGE; do
-          echo \"Pulling image: $${IMAGE}\";
-          docker pull \"$${IMAGE}\" || exit 1;
-        done;
-        echo 'Browser images are up to date. Running tests...';
-        ./gradlew tests --no-daemon --rerun-tasks -Dapi.base.uri=http://app:8080 -Dselenide.base.url=http://app:8080 -Dselenide.remote=http://selenoid:4444/wd/hub && allure generate build/allure-results --clean -o build/allure-report
-      "
+    entrypoint: /app/entrypoint-tests.sh # Use the robust entrypoint script.
+    logging:
+      <<: *gelf-logging
+
+  # --- ELK STACK FOR LOGGING ---
+
+  # Logstash service for processing and forwarding logs from all containers.
+  logstash:
+    image: logstash:7.17.5
+    container_name: taskmanager-logstash
+    ports:
+      - "12201:12201/udp"
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
+    depends_on:
+      elasticsearch:
+        condition: service_started
+    networks:
+      - test-network
+
+  # Elasticsearch service for storing and indexing logs.
+  elasticsearch:
+    image: elasticsearch:7.17.5
+    container_name: taskmanager-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    networks:
+      - test-network
+    ports:
+      - "9200:9200"
+
+  # Kibana service for visualizing logs (can be removed in CI if not needed for reports).
+  kibana:
+    image: kibana:7.17.5
+    container_name: taskmanager-kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    networks:
+      - test-network
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_started
 
 networks:
   test-network:

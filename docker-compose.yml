@@ -1,5 +1,10 @@
-# Docker Compose file for the Task Manager application and its End-to-End tests.
-# This file orchestrates all necessary services: database, application, Selenoid (for UI tests), and the test runner.
+# Docker Compose file for local development and testing.
+# This file orchestrates all necessary services for the test environment:
+#  - taskmanager-app: The application under test.
+#  - db: PostgreSQL database for the application.
+#  - selenoid: A Selenium Hub for running UI tests in Docker containers.
+#  - tests: The test runner that executes Gradle tests.
+#  - ELK Stack (Elasticsearch, Logstash, Kibana): For centralized log collection and analysis.
 
 # Define networks for inter-service communication.
 networks:
@@ -30,6 +35,10 @@ services:
       retries: 5
     networks:
       - test-network # Connect to the shared test network.
+    logging: &gelf-logging # Define a logging anchor for the GELF driver.
+      driver: gelf
+      options:
+        gelf-address: "udp://127.0.0.1:12201"
 
   # Task Manager application service.
   app:
@@ -54,6 +63,8 @@ services:
       start_period: 30s # Give the application time to start up.
     networks:
       - test-network # Connect to the shared test network.
+    logging:
+      <<: *gelf-logging
 
   # The Selenoid service for running browsers in Docker containers.
   selenoid:
@@ -78,9 +89,10 @@ services:
     command: [ "-limit", "4", "-container-network", "${COMPOSE_PROJECT_NAME}_test-network"]
     networks:
         - test-network # Connect to the shared test network.
+    logging:
+      <<: *gelf-logging
 
   # Test runner service for executing tests.
-  # This service first pulls required browser images and then executes the Gradle tests.
   tests:
     build:
       context: .
@@ -98,22 +110,67 @@ services:
         condition: service_healthy
       selenoid:
         condition: service_healthy
+      kibana:
+        condition: service_healthy
     environment:
       # Sets the Gradle user home directory inside the container.
       - GRADLE_USER_HOME=/app/.gradle
     networks:
       - test-network # Connect to the shared test network.
-    command: >
-      bash -c "
-        echo 'Pulling required browser images...';
-        jq -r '.. | .image? | select(.)' /config/browsers.json | uniq | while read -r IMAGE; do
-          echo \"Pulling image: $${IMAGE}\";
-          docker pull \"$${IMAGE}\" || exit 1;
-        done;
-        echo 'Browser images are up to date. Running tests...';
-        ./gradlew tests --no-daemon --rerun-tasks -Dapi.base.uri=http://app:8080 -Dselenide.base.url=http://app:8080 -Dselenide.remote=http://selenoid:4444/wd/hub > /dev/null 2>&1 && allure generate build/allure-results --clean -o build/allure-report
-      "
+    entrypoint: /app/entrypoint-tests.sh # Override the default entrypoint to run our script directly.
+    logging:
+      <<: *gelf-logging
+
+  # --- ELK STACK FOR LOGGING ---
+
+  # Logstash service for processing and forwarding logs from all containers.
+  logstash:
+    image: logstash:7.17.5
+    container_name: taskmanager-logstash
+    ports:
+      - "12201:12201/udp" # Expose GELF input port.
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
+    depends_on:
+      elasticsearch:
+        condition: service_started
+    networks:
+      - test-network
+
+  # Elasticsearch service for storing and indexing logs.
+  elasticsearch:
+    image: elasticsearch:7.17.5
+    container_name: taskmanager-elasticsearch
+    environment:
+      - discovery.type=single-node # Run as a single-node cluster.
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m" # Set JVM heap size.
+    volumes:
+      - esdata:/usr/share/elasticsearch/data # Persist Elasticsearch data.
+    networks:
+      - test-network
+    ports:
+      - "9200:9200" # Expose Elasticsearch API port.
+
+  # Kibana service for visualizing and exploring logs.
+  kibana:
+    image: kibana:7.17.5
+    container_name: taskmanager-kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200 # Point Kibana to the Elasticsearch service.
+    networks:
+      - test-network
+    ports:
+      - "5601:5601" # Expose Kibana UI port.
+    depends_on:
+      elasticsearch:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -I http://localhost:5601 | grep -q 'HTTP/1.1 302 Found'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
 # Define named volumes for data persistence.
 volumes:
   pgdata:
+  esdata: # Add a volume for Elasticsearch data.

@@ -11,13 +11,6 @@ ENV ALLURE_VERSION 2.24.0
 ENV ALLURE_DOWNLOAD_URL https://github.com/allure-framework/allure2/releases/download/${ALLURE_VERSION}/allure-${ALLURE_VERSION}.zip
 
 # Update the package list and install necessary packages.
-# - ca-certificates: Ensures secure connections for downloading resources.
-# - curl: A command-line tool for transferring data with URLs, useful for health checks or downloading.
-# - docker-ce-cli: The Docker CLI client, which is crucial for interacting with the Docker daemon.
-#   This allows Selenoid (running in a separate container) to launch browser containers on the same Docker host.
-# - unzip, wget: Required for installing Allure Commandline directly from a ZIP archive.
-# - jq: A command-line JSON processor, used to parse browsers.json.
-# Download, extract, and configure Allure Commandline
 RUN apt-get update && \
     apt-get install -y ca-certificates curl unzip wget jq && \
     install -m 0755 -d /etc/apt/keyrings && \
@@ -40,12 +33,14 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Copy essential Gradle build files to leverage Docker's layer caching.
-# Changes to these files (build.gradle, settings.gradle, gradlew) invalidate this layer and subsequent ones.
 COPY build.gradle settings.gradle gradlew gradle ./
 
 # Make the Gradle wrapper script executable.
 RUN chmod +x ./gradlew
 
 # Copy the entire project context into the container.
-# This includes all source code, build scripts, and configuration files required for test execution.
 COPY . .
+
+# Copy the entrypoint script from the host and make it executable.
+COPY entrypoint-tests.sh /app/entrypoint-tests.sh
+RUN chmod +x /app/entrypoint-tests.sh
