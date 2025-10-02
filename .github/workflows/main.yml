@@ -31,13 +31,18 @@ jobs:
           sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
           sudo chmod +x /usr/local/bin/docker-compose
 
-      - name: Run tests
-        # If triggered by dispatch, use the SHA from the payload.
-        # Otherwise (if triggered by push), default to 'latest'.
-        env:
-          APP_IMAGE_TAG: ${{ github.event.client_payload.sha || 'latest' }}
+      - name: Run tests and Export Logs on Failure
+        # This step runs the docker-compose stack. The '--exit-code-from tests' flag makes the command exit
+        # with the exit code of the 'tests' container. The '|| true' part ensures that the workflow step
+        # itself doesn't fail immediately, allowing us to capture the exit code and conditionally dump logs.
         run: |
-          docker-compose -f docker-compose.ci.yml up --build --exit-code-from tests
+          docker-compose -f docker-compose.ci.yml up --build --exit-code-from tests || EXIT_CODE=$?
+
+          if [ "${EXIT_CODE:-0}" -ne 0 ]; then
+            echo "::error::Tests failed. Dumping logs for all services..."
+            docker-compose -f docker-compose.ci.yml logs --no-color
+            exit 1
+          fi
           
       - name: Upload Allure Report
         # This action is always run, even if the previous step (tests) fails,
